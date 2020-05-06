@@ -19,6 +19,9 @@
 #include "access/table.h"
 #include "catalog/partition.h"
 #include "catalog/pg_attribute.h"
+#include "catalog/pg_inherits.h"
+#include "catalog/pg_partitioned_table.h"
+#include "catalog/pg_opclass.h"
 #include "cdb/cdbvars.h"
 #include "commands/defrem.h"
 #include "commands/tablecmds.h"
@@ -33,6 +36,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/ruleutils.h"
+#include "utils/syscache.h"
 
 /*
  * Build a datum according to tables partition key based on parse expr. Would
@@ -196,6 +200,101 @@ GpFindTargetPartition(Relation parent, GpAlterPartitionId *partid,
 	return target_relid;
 }
 
+static PartitionSpec *
+generatePartitionSpec(Relation rel, Oid partrelid)
+{
+	HeapTuple   tuple;
+	Form_pg_partitioned_table form;
+	AttrNumber *attrs;
+	oidvector  *opclass;
+	oidvector  *collation;
+	Datum		datum;
+	bool		isnull;
+	PartitionSpec* subpart = makeNode(PartitionSpec);
+
+	tuple = SearchSysCache1(PARTRELID,
+							ObjectIdGetDatum(partrelid));
+
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "missing partition key information for oid %d",
+			 partrelid);
+	/* Fixed-length attributes */
+	form = (Form_pg_partitioned_table) GETSTRUCT(tuple);
+
+	switch (form->partstrat)
+	{
+		case PARTITION_STRATEGY_RANGE:
+			subpart->strategy = psprintf("range");
+			break;
+		case PARTITION_STRATEGY_LIST:
+			subpart->strategy = psprintf("list");
+			break;
+		case PARTITION_STRATEGY_HASH:
+			subpart->strategy = psprintf("hash");
+			break;
+	}
+
+	subpart->location = -1;
+
+	/*
+	 * We can rely on the first variable-length attribute being mapped to the
+	 * relevant field of the catalog's C struct, because all previous
+	 * attributes are non-nullable and fixed-length.
+	 */
+	attrs = form->partattrs.values;
+
+	/* But use the hard way to retrieve further variable-length attributes */
+	/* Operator class */
+	datum = SysCacheGetAttr(PARTRELID, tuple,
+							Anum_pg_partitioned_table_partclass, &isnull);
+	Assert(!isnull);
+	opclass = (oidvector *) DatumGetPointer(datum);
+
+	/* Collation */
+	datum = SysCacheGetAttr(PARTRELID, tuple,
+							Anum_pg_partitioned_table_partcollation, &isnull);
+	Assert(!isnull);
+	collation = (oidvector *) DatumGetPointer(datum);
+
+	/* TODO Expressions */
+
+	subpart->partParams = NIL;
+	for (int i = 0; i < form->partnatts; i++)
+	{
+		PartitionElem *elem = makeNode(PartitionElem);
+		AttrNumber  attno = attrs[i];
+		Form_pg_opclass opclassform;
+		char *name;
+		HeapTuple tmptuple;
+
+		Assert(attno > 0);
+		Assert(attno <= RelationGetDescr(rel)->natts);
+		Form_pg_attribute attr = TupleDescAttr(RelationGetDescr(rel), attno - 1);
+		Assert(attr != NULL);
+		Assert(NameStr(attr->attname) != NULL);
+		elem->name = pstrdup(NameStr(attr->attname));
+
+		/* Collect opfamily information */
+		tmptuple = SearchSysCache1(CLAOID,
+								   ObjectIdGetDatum(opclass->values[i]));
+		if (!HeapTupleIsValid(tmptuple))
+			elog(ERROR, "cache lookup failed for opclass %u", opclass->values[i]);
+		opclassform = (Form_pg_opclass) GETSTRUCT(tmptuple);
+		name = psprintf("%s", NameStr(opclassform->opcname));
+		elem->opclass = list_make1(makeString(name));
+		ReleaseSysCache(tmptuple);
+
+		elog(NOTICE, "sub-partition key is of type %s on column %s ",
+			 subpart->strategy, elem->name);
+		subpart->partParams = lappend(subpart->partParams, elem);
+	}
+
+	elog(NOTICE, "sub-partitions will be created when adding this partition");
+	ReleaseSysCache(tuple);
+
+	return subpart;
+}
+
 void
 ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 {
@@ -270,11 +369,27 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 			ListCell *l;
 
 			GpAlterPartitionCmd   *add_cmd    = castNode(GpAlterPartitionCmd, cmd->def);
-			GpPartDef             *pelem      = castNode(GpPartDef, add_cmd->arg);
-			GpPartitionDefinition *gpPartSpec = makeNode(GpPartitionDefinition);
-			gpPartSpec->partDefs = list_make1(pelem);
+			GpPartDef             *pdef      = castNode(GpPartDef, add_cmd->arg);
+			PartitionDesc partdesc = RelationGetPartitionDesc(rel);
+			PartitionSpec *subpart = NULL;
+
+			GpPartitionDefinition *gpPartDef = makeNode(GpPartitionDefinition);
+			gpPartDef->partDefs = list_make1(pdef);
+
+			if (partdesc->nparts == 0)
+				elog(ERROR, "GPDB add partition syntax needs at least one sibling to exist");
+
+			if (!partdesc->is_leaf[0])
+			{
+				subpart = generatePartitionSpec(rel, partdesc->oids[0]);
+				/* FIXME: lock type */
+				List *childoids = find_inheritance_children(partdesc->oids[0], NoLock);
+				if (childoids)
+					subpart->subPartSpec = generatePartitionSpec(rel, list_nth_oid(childoids, 0));
+			}
+
 			List *cstmts = generatePartitions(RelationGetRelid(rel),
-											  gpPartSpec, NULL, NULL,
+											  gpPartDef, subpart, NULL,
 											  NIL, NULL);
 			foreach(l, cstmts)
 			{
