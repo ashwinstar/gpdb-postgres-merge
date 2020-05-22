@@ -919,6 +919,10 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 									boundspec2->listdatums =
 										list_delete(boundspec2->listdatums,
 													value);
+									if (list_length(boundspec2->listdatums) == 0)
+										ereport(ERROR,
+												(errcode(ERRCODE_SYNTAX_ERROR),
+													errmsg("AT clause cannot contain all values in the partition to be split")));
 								}
 
 								boundspec1->listdatums =
