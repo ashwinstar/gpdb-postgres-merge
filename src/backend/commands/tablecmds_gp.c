@@ -722,6 +722,7 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 			RangeVar *oldpartrv;
 			RangeVar *tmprv;
 			PartitionBoundSpec *boundspec;
+			const char *defaultpartname;
 
 			/* TODO later optimize to avoid detach for default partition */
 
@@ -739,6 +740,11 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 				partrelid = GpFindTargetPartition(rel, pid, false);
 				Assert(OidIsValid(partrelid));
 				partrel = table_open(partrelid, AccessShareLock);
+
+				if (pid->idtype == AT_AP_IDDefault)
+					defaultpartname = pstrdup(RelationGetRelationName(partrel));
+				else
+					defaultpartname = NULL;
 
 				if (partrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 					ereport(ERROR,
@@ -802,19 +808,26 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 
 			/* create new partitions */
 			{
-				List *start = linitial(pc->arg1);
-				List *end   = lsecond(pc->arg1);
-				partname_comp partcomp = {.tablename=NULL, .level=0, .partnum=0};
-				List       *ancestors = get_partition_ancestors(RelationGetRelid(rel));
-				GpPartDefElem *elem;
-				PartitionBoundSpec *boundspec1;
-				PartitionBoundSpec *boundspec2 = boundspec;
-				PartitionKey partkey = RelationGetPartitionKey(rel);
-				ParseState *pstate = make_parsestate(NULL);
-				char *part_col_name;
-				Oid			part_col_typid;
-				int32		part_col_typmod;
-				Oid			part_col_collation;
+				List                *start      = linitial(pc->arg1);
+				List                *end        = lsecond(pc->arg1);
+				partname_comp       partcomp    =
+										{.tablename=NULL, .level=0, .partnum=0};
+				List                *ancestors  =
+										get_partition_ancestors(RelationGetRelid(
+																	rel));
+				GpPartDefElem       *elem;
+				PartitionBoundSpec  *boundspec1;
+				PartitionBoundSpec  *boundspec2 = boundspec;
+				PartitionKey        partkey     = RelationGetPartitionKey(rel);
+				ParseState          *pstate     = make_parsestate(NULL);
+				char                *part_col_name;
+				Oid                 part_col_typid;
+				int32               part_col_typmod;
+				Oid                 part_col_collation;
+				GpAlterPartitionCmd *into       = (GpAlterPartitionCmd *) pc->arg2;
+				GpAlterPartitionId  *partid1;
+				GpAlterPartitionId  *partid2;
+				char *partname;
 
 				Assert(partkey->partnatts == 1);
 
@@ -824,14 +837,15 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 								errmsg("cannot SPLIT LIST PARTITION with START"),
 								errhint("Use SPLIT with the AT clause instead.")));
 
-
-				part_col_name = NameStr(TupleDescAttr(RelationGetDescr(rel), partkey->partattrs[0] - 1)->attname);
-				part_col_typid = get_partition_col_typid(partkey, 0);
-				part_col_typmod = get_partition_col_typmod(partkey, 0);
+				part_col_name      =
+					NameStr(TupleDescAttr(RelationGetDescr(rel),
+										  partkey->partattrs[0] - 1)->attname);
+				part_col_typid     = get_partition_col_typid(partkey, 0);
+				part_col_typmod    = get_partition_col_typmod(partkey, 0);
 				part_col_collation = get_partition_col_collation(partkey, 0);
 
 				boundspec1 = makeNode(PartitionBoundSpec);
-				boundspec1->strategy = boundspec->strategy;
+				boundspec1->strategy   = boundspec->strategy;
 				boundspec1->is_default = false;
 
 				Assert(end != NULL);
@@ -872,15 +886,15 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 													 false,
 													 partkey->parttypbyval[0]));
 						}
-						break;
+							break;
 
 						case PARTITION_STRATEGY_LIST:
 						{
 							ListCell *cell;
 							foreach(cell, end)
 							{
-								Node	   *expr = lfirst(cell);
-								Const	   *value;
+								Node  *expr = lfirst(cell);
+								Const *value;
 
 								value = transformPartitionBoundValue(pstate,
 																	 expr,
@@ -895,19 +909,24 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 
 								if (!boundspec2->is_default)
 								{
-									if (!list_member(boundspec2->listdatums, value))
+									if (!list_member(boundspec2->listdatums,
+													 value))
 										ereport(ERROR,
-												(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-													errmsg("AT clause parameter is not a member of the target partition specification")));
-									boundspec2->listdatums = list_delete(boundspec2->listdatums,
-																		 value);
+												(errcode(
+													ERRCODE_WRONG_OBJECT_TYPE),
+													errmsg(
+														"AT clause parameter is not a member of the target partition specification")));
+									boundspec2->listdatums =
+										list_delete(boundspec2->listdatums,
+													value);
 								}
 
-								boundspec1->listdatums = lappend(boundspec1->listdatums,
-																 value);
+								boundspec1->listdatums =
+									lappend(boundspec1->listdatums,
+											value);
 							}
 						}
-						break;
+							break;
 
 						case PARTITION_STRATEGY_HASH: ereport(ERROR,
 															  (errcode(
@@ -933,12 +952,13 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 
 				if (start)
 				{
-					Const	   *startConst;
+					Const *startConst;
 
 					/* TODO: add assertions for range partition strategy */
 
 					if (list_length(start) != partkey->partnatts)
-						elog(ERROR, "invalid number of start values"); // GPDB_12_MERGE_FIXME: improve message
+						elog(ERROR,
+							 "invalid number of start values"); // GPDB_12_MERGE_FIXME: improve message
 
 					startConst = transformPartitionBoundValue(pstate,
 															  linitial(start),
@@ -949,18 +969,20 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 					if (startConst->constisnull)
 						ereport(ERROR,
 								(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-								 errmsg("cannot use NULL with range partition specification"),
-								 parser_errposition(pstate, pc->location)));
+									errmsg(
+										"cannot use NULL with range partition specification"),
+									parser_errposition(pstate, pc->location)));
 
-					boundspec1->lowerdatums = list_make1(makeConst(partkey->parttypid[0],
-																   partkey->parttypmod[0],
-																   partkey->parttypcoll[0],
-																   partkey->parttyplen[0],
-																   datumCopy(startConst->constvalue,
-																			 partkey->parttypbyval[0],
-																			 partkey->parttyplen[0]),
-																   false,
-																   partkey->parttypbyval[0]));
+					boundspec1->lowerdatums =
+						list_make1(makeConst(partkey->parttypid[0],
+											 partkey->parttypmod[0],
+											 partkey->parttypcoll[0],
+											 partkey->parttyplen[0],
+											 datumCopy(startConst->constvalue,
+													   partkey->parttypbyval[0],
+													   partkey->parttyplen[0]),
+											 false,
+											 partkey->parttypbyval[0]));
 				}
 				else if (boundspec->strategy == PARTITION_STRATEGY_RANGE)
 				{
@@ -970,7 +992,8 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 					 * for this partition.
 					 */
 					boundspec1->lowerdatums = boundspec2->lowerdatums;
-					boundspec2->lowerdatums = copyObject(boundspec1->upperdatums);
+					boundspec2->lowerdatums =
+						copyObject(boundspec1->upperdatums);
 				}
 
 				boundspec1->location = -1;
@@ -981,9 +1004,26 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 				//elem->accessMethod = NULL;
 
 				/* create first partition stmt */
-				stmts = lappend(stmts, makePartitionCreateStmt(rel, NULL, boundspec1, NULL, elem, &partcomp));
+				partname = NULL;
+				if (into)
+				{
+					partid1 = into->partid;
+					Assert(partid1->idtype == AT_AP_IDName);
+					partname = strVal(partid1->partiddef);
+				}
+				stmts = lappend(stmts, makePartitionCreateStmt(rel, partname, boundspec1, NULL, elem, &partcomp));
+
 				/* create second partition stmt */
-				stmts = lappend(stmts, makePartitionCreateStmt(rel, NULL, boundspec2, NULL, elem, &partcomp));
+				partname = NULL;
+				if (defaultpartname)
+					partcomp.tablename = defaultpartname;
+				else if (into)
+				{
+					partid2 = (GpAlterPartitionId *) into->arg;
+					Assert(partid2->idtype == AT_AP_IDName);
+					partname = strVal(partid2->partiddef);
+				}
+				stmts = lappend(stmts, makePartitionCreateStmt(rel, partname, boundspec2, NULL, elem, &partcomp));
 			}
 
 			foreach (l, stmts)
