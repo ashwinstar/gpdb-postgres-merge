@@ -891,6 +891,9 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 						case PARTITION_STRATEGY_LIST:
 						{
 							ListCell *cell;
+							PartitionBoundSpec *boundspec_newvals = boundspec1;
+							PartitionBoundSpec *boundspec_remainingvals = boundspec2;
+
 							foreach(cell, end)
 							{
 								Node  *expr = lfirst(cell);
@@ -904,31 +907,34 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 																	 part_col_collation);
 
 								/* Skip if the value is already moved to the new list */
-								if (list_member(boundspec1->listdatums, value))
+								if (list_member(boundspec_newvals->listdatums, value))
 									continue;
 
-								if (!boundspec2->is_default)
+								if (!boundspec_remainingvals->is_default)
 								{
-									if (!list_member(boundspec2->listdatums,
+									if (!list_member(boundspec_remainingvals->listdatums,
 													 value))
 										ereport(ERROR,
 												(errcode(
 													ERRCODE_WRONG_OBJECT_TYPE),
 													errmsg(
 														"AT clause parameter is not a member of the target partition specification")));
-									boundspec2->listdatums =
-										list_delete(boundspec2->listdatums,
+									boundspec_remainingvals->listdatums =
+										list_delete(boundspec_remainingvals->listdatums,
 													value);
-									if (list_length(boundspec2->listdatums) == 0)
+									if (list_length(boundspec_remainingvals->listdatums) == 0)
 										ereport(ERROR,
 												(errcode(ERRCODE_SYNTAX_ERROR),
 													errmsg("AT clause cannot contain all values in the partition to be split")));
 								}
 
-								boundspec1->listdatums =
-									lappend(boundspec1->listdatums,
+								boundspec_newvals->listdatums =
+									lappend(boundspec_newvals->listdatums,
 											value);
 							}
+
+							boundspec1 = boundspec_remainingvals;
+							boundspec2 = boundspec_newvals;
 						}
 							break;
 
