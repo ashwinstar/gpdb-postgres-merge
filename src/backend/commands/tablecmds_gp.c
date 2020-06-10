@@ -1217,6 +1217,25 @@ ATExecGPPartCmds(Relation origrel, AlterTableCmd *cmd)
 		}
 		break;
 
+		case AT_PartSetTemplate:
+		{
+			GpAlterPartitionCmd *pc = castNode(GpAlterPartitionCmd, cmd->def);
+			GpPartitionDefinition *gpPartDef = (GpAlterPartitionId *) pc->arg;
+			List			   *ancestors = get_partition_ancestors(RelationGetRelid(rel));
+			int				   level = list_length(ancestors) + 1;
+			Oid topParentrelid = ancestors ? llast_oid(ancestors) : RelationGetRelid(rel);
+
+			if (gpPartDef)
+				StoreGpPartitionTemplate(topParentrelid, level, gpPartDef);
+			else
+				RemoveGpPartitionTemplate(topParentrelid, level);
+
+			if (rel != origrel)
+				table_close(rel, AccessShareLock);
+			return;
+		}
+		break;
+
 		default:
 			elog(ERROR, "Not implemented");
 			break;

@@ -124,3 +124,32 @@ RemoveGpPartitionTemplateByRelId(Oid relid)
 	systable_endscan(scan);
 	table_close(gp_template, RowExclusiveLock);
 }
+
+void
+RemoveGpPartitionTemplate(Oid relid, int32 level)
+{
+	Relation	gp_template;
+	ScanKeyData key[2];
+	SysScanDesc scan;
+	HeapTuple	tuple;
+	GpPartitionDefinition *def = NULL;
+
+	gp_template = table_open(PartitionTemplateRelationId, RowExclusiveLock);
+	ScanKeyInit(&key[0],
+				Anum_gp_partition_template_relid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	ScanKeyInit(&key[1],
+				Anum_gp_partition_template_level,
+				BTEqualStrategyNumber, F_OIDEQ,
+				Int16GetDatum(level));
+
+	scan = systable_beginscan(gp_template, GpPartitionTemplateRelidLevelIndexId,
+							  true, NULL, 2, key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+		CatalogTupleDelete(gp_template, &tuple->t_self);
+
+	systable_endscan(scan);
+	table_close(gp_template, RowExclusiveLock);
+}

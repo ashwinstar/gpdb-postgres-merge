@@ -52,7 +52,8 @@ typedef FormData_gp_partition_template *Form_gp_partition_template;
  */
 
 extern void StoreGpPartitionTemplate(Oid relid, int32 level, GpPartitionDefinition *gpPartDef);
-extern void RemoveGpPartitionTemplateByRelId(Oid relid);
 extern GpPartitionDefinition *GetGpPartitionTemplate(Oid relid, int32 level);
+extern void RemoveGpPartitionTemplateByRelId(Oid relid);
+extern void RemoveGpPartitionTemplate(Oid relid, int32 level);
 
 #endif							/* GP_PARTITION_TEMPLATE_H */

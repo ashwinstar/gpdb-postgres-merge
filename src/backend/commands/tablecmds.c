@@ -4088,6 +4088,7 @@ strip_gpdb_part_commands(List *cmds)
 			case AT_PartSplit:
 			case AT_PartTruncate:
 			case AT_PartExchange:
+			case AT_PartSetTemplate:
 				break;
 			default:
 				newcmds = lappend(newcmds, cmd);
@@ -4419,6 +4420,7 @@ AlterTableGetLockLevel(List *cmds)
 			case AT_PartDrop:
 			case AT_PartSplit:
 			case AT_PartExchange:
+			case AT_PartSetTemplate:
 				cmd_lockmode = AccessExclusiveLock;
 				break;
 
@@ -4889,6 +4891,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_PartSplit:
 		case AT_PartTruncate:
 		case AT_PartExchange:
+		case AT_PartSetTemplate:
 			ATSimplePermissions(rel, ATT_TABLE);
 			/* No command-specific prep needed */
 			pass = AT_PASS_MISC;
@@ -5260,6 +5263,7 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		case AT_PartSplit:
 		case AT_PartTruncate:
 		case AT_PartExchange:
+		case AT_PartSetTemplate:
 			ATExecGPPartCmds(rel, cmd);
 			break;
 	}
