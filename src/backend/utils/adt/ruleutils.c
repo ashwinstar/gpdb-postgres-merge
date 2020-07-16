@@ -53,6 +53,7 @@
 #include "optimizer/optimizer.h"
 #include "parser/parse_node.h"
 #include "parser/parse_agg.h"
+#include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_cte.h"
@@ -9177,6 +9178,68 @@ get_rule_expr(Node *node, deparse_context *context,
 		case T_RowIdExpr:
 			{
 				appendStringInfo(buf, "RowIdExpr");
+			}
+			break;
+
+		case T_GpPartitionDefinition:
+			{
+				GpPartitionDefinition *def = (GpPartitionDefinition*)node;
+				ListCell *lc;
+				char *sep = "";
+
+				foreach(lc, def->partDefElems)
+				{
+					GpPartDefElem *elem = lfirst(lc);
+
+					appendStringInfoString(buf, sep);
+					sep = ", ";
+					if (elem->partName)
+					{
+						if (elem->isDefault)
+							appendStringInfo(buf, "DEFAULT SUBPARTITION %s", elem->partName);
+						else
+							appendStringInfo(buf, "SUBPARTITION %s", elem->partName);
+					}
+
+					if (elem->boundSpec && IsA(elem->boundSpec, GpPartitionRangeSpec))
+					{
+						GpPartitionRangeSpec *rspec = (GpPartitionRangeSpec*) elem->boundSpec;
+						ParseState *pstate = make_parsestate(NULL);
+						if (rspec->partStart)
+						{
+							GpPartitionRangeItem *ri = rspec->partStart;
+							Assert(list_length(ri->val) == 1);
+							A_Const *val = lfirst(list_nth_cell(ri->val, 0));
+							Const *tmp = (Const*)transformExpr(pstate, (Node*)val, EXPR_KIND_PARTITION_BOUND);
+
+							appendStringInfo(buf, " START(");
+							get_const_expr(tmp, context, -1);
+							appendStringInfo(buf, ")");
+						}
+						if (rspec->partEnd)
+						{
+							GpPartitionRangeItem *ri = rspec->partEnd;
+							Assert(list_length(ri->val) == 1);
+							A_Const *val = lfirst(list_nth_cell(ri->val, 0));
+							Const *tmp = (Const*)transformExpr(pstate, (Node*)val, EXPR_KIND_PARTITION_BOUND);
+
+							appendStringInfo(buf, " END(");
+							get_const_expr(tmp, context, -1);
+							appendStringInfo(buf, ")");
+						}
+						if (rspec->partEvery)
+						{
+							List *ri = rspec->partEvery;
+							Assert(list_length(ri) == 1);
+							A_Const *val = lfirst(list_nth_cell(ri, 0));
+							Const *tmp = (Const*)transformExpr(pstate, (Node*)val, EXPR_KIND_PARTITION_BOUND);
+
+							appendStringInfo(buf, " Every(");
+							get_const_expr(tmp, context, -1);
+							appendStringInfo(buf, ")");
+						}
+					}
+				}
 			}
 			break;
 

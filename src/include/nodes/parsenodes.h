@@ -2070,9 +2070,6 @@ typedef struct GpAlterPartitionCmd
 	int         location;   /* token location, or -1 if unknown */
 } GpAlterPartitionCmd;
 
-/* GPDB_12_MERGE_FIXME: In PostgreSQL, the lower boundary is always inclusive
- * and the upper boundary is exclusive. The legacy syntax was more flexible.
- */
 typedef enum GpPartitionEdgeBounding
 {
 	PART_EDGE_UNSPECIFIED,
