@@ -251,7 +251,7 @@ function _main() {
     centos|ubuntu|sles)
       prep_env
       build_xerces
-      test_orca
+#      test_orca
       install_deps
       ;;
     win32)
