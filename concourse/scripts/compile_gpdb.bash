@@ -62,6 +62,11 @@ function install_libuv() {
   cp -a /usr/local/lib/libuv* ${libdir}/
 }
 
+function install_llvm_packages {
+    wget http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+    yum localinstall -y epel-release-latest-7.noarch.rpm
+    yum install -y llvm5.0 llvm5.0-devel clang
+}
 
 function install_deps_for_centos_or_sles() {
   rpm -i libquicklz-installer/libquicklz-*.rpm
@@ -269,6 +274,7 @@ function _main() {
     BLD_TARGET_OPTION=("")
   fi
 
+  install_llvm_packages
   export CONFIGURE_FLAGS=${CONFIGURE_FLAGS}
 
   build_gpdb "${BLD_TARGET_OPTION[@]}"
