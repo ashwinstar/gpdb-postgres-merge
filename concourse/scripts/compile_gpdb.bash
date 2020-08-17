@@ -65,7 +65,8 @@ function install_libuv() {
 function install_llvm_packages {
     wget http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
     yum localinstall -y epel-release-latest-7.noarch.rpm
-    yum install -y llvm5.0 llvm5.0-devel clang
+    yum install -y llvm-toolset-7.0 llvm7.0 llvm7.0-devel
+    source /opt/rh/llvm-toolset-7.0/enable
 }
 
 function install_deps_for_centos_or_sles() {
